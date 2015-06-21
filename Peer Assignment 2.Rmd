@@ -1,0 +1,361 @@
+---
+title: "Peer Assignment 2"
+author: "Ahmed Tadde"
+date: "June 18, 2015"
+output: 
+  html_document: 
+    fig_height: 6
+    fig_width: 9
+    keep_md: yes
+---
+
+##Synopsis
+
+The U.S. National Oceanic and Atmospheric Administration (NOAA) maintains a database that tracks weather events in the United States. The data used for this analysis was collected from 1950 to 2011. The goal of the ensuing analysis is to:
+
+   1. Determine the types of events (as indicated in the EVTYPE variable) that are most harmful with respect to population health(injuries and fatalities).
+   2. Determine the types of events that have the greatest economic consequences( Crop and property Damage).
+
+ 
+
+##Data Processing[Code Section]
+
+   - Libraries
+   - Loading the Data
+   - Tidying the Data
+
+###Libraries
+```{r, tidy=TRUE}
+library(data.table)
+library(dplyr)
+```
+
+
+
+
+###Loading the Data
+```{r, tidy = TRUE,cache=TRUE}
+
+
+link <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+location.name <- "repdata-data-StormData.csv.bz2"
+if(!file.exists("repdata-data-StormData.csv.bz2")) {
+    download.file(link, destfile = location.name, method = "auto")
+}
+
+Data <- read.table("repdata-data-StormData.csv.bz2", 
+                 sep = ",",
+                 na.strings = "NA",
+                 stringsAsFactors = F,
+                 header = T)
+
+Data <- as.data.table(Data)
+
+#=====================================================================================
+####Inspecting the Data
+dim(Data)
+str(Data)
+names(Data)
+```
+
+
+
+
+###Tidying the Data
+```{r, tidy = TRUE, cache=TRUE}
+#=====================================================================================
+#####We can set some variables to numeric type for calculations later on
+Data$FATALITIES <- as.numeric(Data$FATALITIES)
+Data$INJURIES <- as.numeric(Data$INJURIES)
+# Data$CROPDMG <- as.numeric(Data$CROPDMG)
+# Data$PROPDMG <- as.numeric(Data$PROPDMG)
+
+
+#=====================================================================================
+##### Setting the string characters in EVTYPE to lower cases for convenience
+Data$EVTYPE <- with(Data, tolower(EVTYPE))
+
+
+
+
+
+
+#=====================================================================================
+##### Recoding the Property damage variable based on a mapping method referenced from NOAA documentation  
+Data$PROPDMGEXP[Data$PROPDMGEXP %in% c("","-","?", "NA")] <- 0
+Data$PROPDMGEXP[Data$PROPDMGEXP %in% c("+")] <- 1
+Data$PROPDMGEXP[Data$PROPDMGEXP %in% c("0","1","2","3","4","5","6","7","8","9")] <- 10
+Data$PROPDMGEXP[Data$PROPDMGEXP %in% c("H","h")] <- 100
+Data$PROPDMGEXP[Data$PROPDMGEXP %in% c("K","k")] <- 1000
+Data$PROPDMGEXP[Data$PROPDMGEXP %in% c("M","m")] <- 1000000
+Data$PROPDMGEXP[Data$PROPDMGEXP %in% c("B","b")] <- 1000000000
+Data$PROPDMGEXP <- as.numeric(Data$PROPDMGEXP)
+
+
+
+
+
+#=====================================================================================
+##### Recoding the Crop damage variable based on a mapping method referenced from NOAA documentation
+Data$CROPDMGEXP[Data$CROPDMGEXP %in% c("","-","?","NA")] <- 0
+Data$CROPDMGEXP[Data$CROPDMGEXP %in% c("+")] <- 1
+Data$CROPDMGEXP[Data$CROPDMGEXP %in% c("0","1","2","3","4","5","6","7","8","9")] <- 10
+Data$CROPDMGEXP[Data$CROPDMGEXP %in% c("H","h")] <- 100
+Data$CROPDMGEXP[Data$CROPDMGEXP %in% c("K","k")] <- 1000
+Data$CROPDMGEXP[Data$CROPDMGEXP %in% c("M","m")] <- 1000000
+Data$CROPDMGEXP[Data$CROPDMGEXP %in% c("B","b")] <- 1000000000
+Data$CROPDMGEXP <- as.numeric(Data$CROPDMGEXP)
+
+
+#=====================================================================================
+##### To have observations with complete case (all 48 official weather 
+##### event types), we filter the data to keep only the observations starting from 1996. 
+Data<- filter(Data, as.POSIXct(Data$BGN_DATE, format="%m/%d/%Y") > as.POSIXct("12/31/1995", format="%m/%d/%Y"))
+
+
+#=====================================================================================
+##### Only keeping the columns of interests
+Data <- Data%>%select(c(8,23:28))
+
+
+#=====================================================================================
+##### Do not include "summary" observations
+Data <- Data[!(grepl("summary",Data$EVTYPE)),]
+
+
+#=====================================================================================
+##### Only keep events that created at least one type of damage.
+Data <- Data%>%filter(
+                      !(FATALITIES > 0.0 & INJURIES > 0.0 & 
+                        PROPDMG > 0.0    & CROPDMG > 0.0)
+                     )
+
+
+
+#=====================================================================================
+##### Create new variables to evaluate the harmful effect on 
+##### the population (injuries+fatalities), the economic cost of
+##### crop/property damages( separately and together) 
+Data <- Data%>%mutate(
+                      POPULATION.HEALTH = FATALITIES + INJURIES,
+                      CROP.DAMAGE.COST  = CROPDMG * CROPDMGEXP,
+                      PROPERTY.DAMAGE.COST = PROPDMG * PROPDMGEXP,
+                      TOTAL.DAMAGE.COST = CROP.DAMAGE.COST + PROPERTY.DAMAGE.COST
+                      )
+
+
+
+
+#=====================================================================================
+##### Mapping __some__ unofficial event types to the 48 event types [time consuming]
+Data$EVTYPE[grepl("tstm wind",Data$EVTYPE) |
+            grepl("severe thunderstorm",Data$EVTYPE)|
+            grepl("severe thunderstorms",Data$EVTYPE)|
+            grepl("thunderstorm",Data$EVTYPE)|
+            grepl("thunderstorms",Data$EVTYPE)|
+            grepl("thunderstorm winds",Data$EVTYPE)|
+            grepl("thunderstorm wind",Data$EVTYPE)] <- "thunderstorm"
+
+
+Data$EVTYPE[grepl("ice", Data$EVTYPE)|
+            grepl("low temperature", Data$EVTYPE)|grepl("cool", Data$EVTYPE)| 
+            grepl("icy road", Data$EVTYPE)|
+            grepl("hypothermia/exposure", Data$EVTYPE)| 
+            grepl("wintry mix", Data$EVTYPE)|
+            grepl("snow", Data$EVTYPE)| 
+            grepl("record low", Data$EVTYPE)|grepl("hypothermia", Data$EVTYPE)|
+            grepl("record cold", Data$EVTYPE)|grepl("record  cold", Data$EVTYPE)|
+            grepl("winter weather/mix", Data$EVTYPE)| 
+            grepl("winter weather mix",Data$EVTYPE)] <- "winter weather"
+
+Data$EVTYPE[grepl("frost",Data$EVTYPE)| grepl("freeze", Data$EVTYPE)] <- "frost/freeze"
+Data$EVTYPE[grepl("heat", Data$EVTYPE) | grepl("hot", Data$EVTYPE)] <- "heat"
+Data$EVTYPE[grepl("freezing", Data$EVTYPE)] <- "freezing fog"
+Data$EVTYPE[grepl("marine tstm wind", Data$EVTYPE)] <- "marine thunderstorm wind"
+Data$EVTYPE[grepl("hurricane", Data$EVTYPE) | grepl("typhoon", Data$EVTYPE)] <- "hurricane(typhoon)"
+Data$EVTYPE[grepl("tornado", Data$EVTYPE)] <- "tornado"
+Data$EVTYPE[grepl("surf", Data$EVTYPE)] <- "high surf"
+Data$EVTYPE[grepl("cold/wind chill", Data$EVTYPE)] <- "cold/wind chill"
+Data$EVTYPE[grepl("cold wind chill", Data$EVTYPE)] <- "cold/wind chill"
+Data$EVTYPE[grepl("extreme cold wind chill", Data$EVTYPE)] <- "extreme cold/wind chill"
+Data$EVTYPE[grepl("extreme cold/wind chill", Data$EVTYPE)] <- "extreme cold/wind chill"
+Data$EVTYPE[grepl("hail", Data$EVTYPE)] <- "hail"
+Data$EVTYPE[grepl("high winds", Data$EVTYPE)] <-"high wind"
+Data$EVTYPE[grepl("winds", Data$EVTYPE)] <-"high wind"
+Data$EVTYPE[grepl("wind and wave", Data$EVTYPE)] <-"high wind"
+Data$EVTYPE[grepl("wind", Data$EVTYPE)] <-"high wind"
+Data$EVTYPE[grepl("wind damage", Data$EVTYPE)] <-"high wind"
+Data$EVTYPE[grepl("whirl wind damage", Data$EVTYPE)] <-"high wind"
+Data$EVTYPE[grepl("strong wind", Data$EVTYPE)] <-"high wind"
+Data$EVTYPE[grepl("strong winds", Data$EVTYPE)] <-"high wind"
+Data$EVTYPE[grepl("storm surge/tide", Data$EVTYPE)] <-"storm surge"
+Data$EVTYPE[grepl("wild/forest", Data$EVTYPE)] <-"wildfire"
+Data$EVTYPE[grepl("wild", Data$EVTYPE)] <- "wildfire"
+Data$EVTYPE[grepl("fire", Data$EVTYPE)] <- "wildfire"
+Data$EVTYPE[grepl("flood", Data$EVTYPE)| 
+            grepl("hightide", Data$EVTYPE) | 
+            grepl("high tide", Data$EVTYPE)|
+            grepl("urban sml stream fld", Data$EVTYPE)|
+            grepl("urban/sml stream fld", Data$EVTYPE)] <- "flood"
+
+
+#=====================================================================================
+####### Making the EVTYPE variable to a factor variable to facilitate calculations 
+####### in the Result session
+Data$EVTYPE <- as.factor(Data$EVTYPE)
+
+
+```
+
+
+
+
+
+
+##Results
+
+- __The top 10 most harmful event types with respect to Injuries and with respect to Fatalities__ 
+
+With respect to Injuries,
+```{r, tidy = TRUE, cache = TRUE}
+table1 <- Data[, .(INJURIES = sum(INJURIES, na.rm = T)),
+              by = .(EVENT.TYPE = EVTYPE )]%>%arrange(desc(INJURIES))
+
+table1 <- head(table1, n = 10L) ; table1
+
+```
+
+
+With respect to Fatalities,
+```{r, tidy = TRUE , cache = TRUE}
+table2 <- Data[, .(FATALITIES = sum(FATALITIES, na.rm = T)),
+              by = .(EVENT.TYPE = EVTYPE )]%>%arrange(desc(FATALITIES))
+
+table2 <- head(table2, n = 10L) ; table2
+
+```
+
+
+Displaying both results,
+```{r, tidy = TRUE}
+par(mfrow=c(1,2))
+barplot(table1[1:10, INJURIES],
+        names.arg=table1[1:10, EVENT.TYPE],
+        horiz= T,  
+        col="red", 
+        xlab="Injuries", 
+        main="Top 10 Most Costly Events (Population: Injuries)",
+        xlim=c(0,25000),las=1,cex.names=.7, cex.main=0.8, cex.axis=1)
+
+barplot(table2[1:10, FATALITIES],
+        names.arg=table2[1:10, EVENT.TYPE],
+        horiz= T,  
+        col="red", 
+        xlab="Fatalities", 
+        main="Top 10 Most Costly Events (Population: Fatalities)",
+        xlim=c(0,2500),las=1,cex.names=.7, cex.main=0.8, cex.axis=1)
+```
+
+
+- __The top 10 most harmful event types with respect to Crop Damage and with respect to Property Damage__ 
+
+
+With respect to Crop Damage,
+```{r, tidy = TRUE, cache = TRUE}
+
+table3 <- Data[, .(CROP.DAMAGE.COST = sum(CROP.DAMAGE.COST, na.rm = T)/10^6),
+              by = .(EVENT.TYPE = EVTYPE )]%>%arrange(desc(CROP.DAMAGE.COST))
+table3 <- head(table3, n = 10L) ; table3
+
+```
+
+
+With respect to Property Damage,
+```{r, tidy = TRUE, cache = TRUE}
+
+table4 <- Data[, .(PROPERTY.DAMAGE.COST = sum(PROPERTY.DAMAGE.COST, na.rm = T)/10^6),
+              by = .(EVENT.TYPE = EVTYPE )]%>%arrange(desc(PROPERTY.DAMAGE.COST))
+table4 <- head(table4, n = 10L) ; table4
+
+```
+
+
+Displaying both results,
+```{r, tidy = TRUE}
+par(mfrow=c(1,2))
+barplot(table3[1:10,CROP.DAMAGE.COST],
+        names.arg=table3[1:10, EVENT.TYPE],
+        horiz= T,  
+        col="dark blue", 
+        xlab="Dollars (x1,000,000)", 
+        main="Top 10 Most Costly Events (Economically: Crop Damage)",
+        xlim=c(0,20000),las=1,cex.names=.65, cex.main=0.8, cex.axis=1)
+
+barplot(table4[1:10,PROPERTY.DAMAGE.COST],
+        names.arg=table4[1:10, EVENT.TYPE],
+        horiz= T,  
+        col="dark blue", 
+        xlab="Dollars (x1,000,000)", 
+        main="Top 10 Most Costly Events (Economically: Property Damage)",
+        xlim=c(0,200000),las=1,cex.names=.65, cex.main=0.8, cex.axis=1)
+
+```
+
+
+
+ -__The top 10 event types that are most harmful with respect to population health(injuries and fatalities) and economic consequences__
+
+
+With respect to population health(injuries and fatalities),
+```{r, tidy = TRUE}
+table5 <- Data[, .(POPULATION.HEALTH = sum(POPULATION.HEALTH, na.rm = T)),
+               by = .(EVENT.TYPE = EVTYPE )]%>%arrange(desc(POPULATION.HEALTH))
+table5 <- head(table5, n = 10L) ; table5
+
+```
+
+
+With respect to economic consequences,
+```{r, tidy = TRUE}
+table6 <- Data[, .(TOTAL.DAMAGE.COST = sum(TOTAL.DAMAGE.COST, na.rm = T)/10^6),
+               by = .(EVENT.TYPE = EVTYPE )]%>%arrange(desc(TOTAL.DAMAGE.COST))
+table6 <- head(table6, n = 10L) ; table6
+
+
+```
+
+
+Displaying both results,
+```{r, tidy = TRUE}
+par(mfrow = c(1,2))
+barplot(table5[1:10, POPULATION.HEALTH],
+        names.arg=table5[1:10, EVENT.TYPE],
+        horiz= T,  
+        col="red", 
+        xlab="Injuries and Fatalities", 
+        main="Top 10 Most Costly Events (Population: Injuries and Fatalities)",
+        xlim=c(0,25000),las=1,cex.names=.7, cex.main=0.8, cex.axis=1)
+
+
+
+barplot(table6[1:10,TOTAL.DAMAGE.COST],
+        names.arg=table2[1:10, EVENT.TYPE],
+        horiz= T,  
+        col="dark blue", 
+        xlab="Dollars (x1,000,000)", 
+        main="Top 10 Most Costly Events (Economically: Crop and Property)",
+        xlim=c(0,250000),las=1,cex.names=.8, cex.main=0.8, cex.axis=1)
+
+```
+
+
+
+##Conlcusion
+
+- In no particular order, excessive heat, tornadoes, and floods are the three event types that cause the most damage in terms of population health and in terms economict cost.
+
+
+##References
+
+- [NOAA Documentation](https://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf)
+- [The 48 official event types since 1996](http://www.ncdc.noaa.gov/stormevents/details.jsp)
